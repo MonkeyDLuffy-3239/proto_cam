@@ -3,47 +3,41 @@ from flask import Flask, Response
 
 app = Flask(__name__)
 
-# Initialize the camera
-camera = cv2.VideoCapture(0)  # Try 1, 2, or other indices if 0 doesn't work
-if not camera.isOpened():
-    print("Error: Could not access the camera. Check camera index and permissions.")
+try:
+    face_cascade = cv2.CascadeClassifier(cv2.data.haarcascades + 'haarcascade_frontalface_default.xml')
+    eye_cascade = cv2.CascadeClassifier(cv2.data.haarcascades + 'haarcascade_eye.xml')
+except cv2.error as e:
+    print("Error loading Haar cascade classifiers:", e)
     exit()
+
+# Initialize the camera
+cap = cv2.VideoCapture(0)
 
 def generate_frames():
     while True:
-        success, frame = camera.read()
-        if not success:
-            print("Error: Failed to read frame from camera.")
+        ret, frame = cap.read()
+        if not ret:
             break
-        else:
-            # Encode frame as JPEG
-            ret, buffer = cv2.imencode('.jpg', frame)
-            if not ret:
-                print("Error: Failed to encode frame.")
-                break
-            frame = buffer.tobytes()
-            # Yield frame as byte stream
-            yield (b'--frame\r\n'
-                   b'Content-Type: image/jpeg\r\n\r\n' + frame + b'\r\n')
 
-@app.route('/video_feed')
+        gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
+
+        faces = face_cascade.detectMultiScale(gray, 1.1, 4)
+        for (x, y, w, h) in faces:
+            cv2.rectangle(frame, (x, y), (x+w, y+h), (255, 0, 0), 2)
+            roi_gray = gray[y:y+h, x:x+w]
+            roi_color = frame[y:y+h, x:x+w]
+            eyes = eye_cascade.detectMultiScale(roi_gray)
+            for (ex, ey, ew, eh) in eyes:
+                cv2.rectangle(roi_color, (ex, ey), (ex+ew, ey+eh), (0, 255, 0), 2)
+
+        ret, buffer = cv2.imencode('.jpg', frame)
+        frame = buffer.tobytes()
+        yield (b'--frame\r\n'
+               b'Content-Type: image/jpeg\r\n\r\n' + frame + b'\r\n')
+
+@app.route('/')
 def video_feed():
     return Response(generate_frames(), mimetype='multipart/x-mixed-replace; boundary=frame')
 
-@app.route('/')
-def index():
-    return '''
-        <html>
-            <head><title>Live Camera Feed</title></head>
-            <body>
-                <h1>Live Camera Feed</h1>
-                <img src="/video_feed">
-            </body>
-        </html>
-    '''
-
 if __name__ == '__main__':
-    try:
-        app.run(host='0.0.0.0', port=5000)
-    except Exception as e:
-        print(f"Error: {e}")
+    app.run(host='0.0.0.0', port=5000)
